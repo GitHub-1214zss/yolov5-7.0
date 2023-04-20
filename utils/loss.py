@@ -237,7 +237,7 @@ class ComputeLoss:
         return tcls, tbox, indices, anch
 
 
-# simotau损失
+# simota损失
 # 添加Optimal Transport Assignment到yolov5的Loss中
 # https://www.bilibili.com/video/BV1xD4y1J76n
 class ComputeLossOTA:
