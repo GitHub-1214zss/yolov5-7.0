@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# SiLU和Swish 一致= x*sigmod(x)
 class SiLU(nn.Module):
     # SiLU activation https://arxiv.org/pdf/1606.08415.pdf
     @staticmethod
@@ -20,7 +21,7 @@ class Hardswish(nn.Module):
     @staticmethod
     def forward(x):
         # return x * F.hardsigmoid(x)  # for TorchScript and CoreML
-        return x * F.hardtanh(x + 3, 0.0, 6.0) / 6.0  # for TorchScript, CoreML and ONNX
+        return x * F.hardtanh(x + 3, 0.0, 6.0) / 6.0  # for TorchScript, CoreML and ONNX 为了上述手动实现Hardswish
 
 
 class Mish(nn.Module):
@@ -30,30 +31,44 @@ class Mish(nn.Module):
         return x * F.softplus(x).tanh()
 
 
+# 节省内存方式的mish（未使用）
 class MemoryEfficientMish(nn.Module):
-    # Mish activation memory-efficient
+    # Mish activation memory-efficient一种高效的Mish激活函数  不采用自动求导(自己写前向传播和反向传播) 更高效
     class F(torch.autograd.Function):
 
         @staticmethod
         def forward(ctx, x):
+            '''
+            save_for_backward会保留x的全部信息(一个完整的外挂Autograd Function的Variable),
+            并提供避免in-place操作导致的input在backward被修改的情况.
+            in-place操作指不通过中间变量计算的变量间的操作。
+            '''
             ctx.save_for_backward(x)
             return x.mul(torch.tanh(F.softplus(x)))  # x * tanh(ln(1 + exp(x)))
 
         @staticmethod
-        def backward(ctx, grad_output):
+        def backward(ctx, grad_output):  # 反向传播
+            # 此处saved_tensors[0] 作用同上文 save_for_backward
             x = ctx.saved_tensors[0]
             sx = torch.sigmoid(x)
             fx = F.softplus(x).tanh()
+            # 返回该激活函数求导之后的结果 求导过程见上文
             return grad_output * (fx + x * sx * (1 - fx * fx))
 
-    def forward(self, x):
+    def forward(self, x):  # 应用前向传播方法
         return self.F.apply(x)
 
 
+# FReLU 漏斗ReLu 漏斗条件T(x)
 class FReLU(nn.Module):
     # FReLU activation https://arxiv.org/abs/2007.11824
     def __init__(self, c1, k=3):  # ch_in, kernel
         super().__init__()
+        '''
+        定义漏斗条件T(x)  参数池窗口(Parametric Pooling Window )来创建空间依赖
+        nn.Con2d(in_channels, out_channels, kernel_size, stride, padding, dilation=1, bias=True)
+        使用 深度可分离卷积 DepthWise Separable Conv + BN 实现T(x)
+        '''
         self.conv = nn.Conv2d(c1, c1, k, 1, 1, groups=c1, bias=False)
         self.bn = nn.BatchNorm2d(c1)
 

@@ -6,6 +6,13 @@ Usage:
     $ python models/yolo.py --cfg yolov5s.yaml
 """
 
+from utils.torch_utils import (fuse_conv_and_bn, initialize_weights, model_info, profile, scale_img, select_device,
+                               time_sync)
+from utils.plots import feature_visualization
+from utils.general import LOGGER, check_version, check_yaml, make_divisible, print_args
+from utils.autoanchor import check_anchor_order
+from models.experimental import *
+from models.common import *
 import argparse
 import contextlib
 import os
@@ -21,13 +28,6 @@ if str(ROOT) not in sys.path:
 if platform.system() != 'Windows':
     ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-from models.common import *
-from models.experimental import *
-from utils.autoanchor import check_anchor_order
-from utils.general import LOGGER, check_version, check_yaml, make_divisible, print_args
-from utils.plots import feature_visualization
-from utils.torch_utils import (fuse_conv_and_bn, initialize_weights, model_info, profile, scale_img, select_device,
-                               time_sync)
 
 try:
     import thop  # for FLOPs computation
@@ -36,6 +36,7 @@ except ImportError:
 
 
 class Detect(nn.Module):
+    """Detect模块是用来构建Detect层的，将输入feature map 通过一个卷积操作和公式计算到我们想要的shape, 为后面的计算损失或者NMS作准备"""
     # YOLOv5 Detect head for detection models
     stride = None  # strides computed during build
     dynamic = False  # force grid reconstruction
@@ -44,18 +45,36 @@ class Detect(nn.Module):
     def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
         super().__init__()
         self.nc = nc  # number of classes
-        self.no = nc + 5  # number of outputs per anchor
-        self.nl = len(anchors)  # number of detection layers
-        self.na = len(anchors[0]) // 2  # number of anchors
-        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid
+        self.no = nc + 5  # number of outputs per anchor VOC: 5+20=25  xywhc+20classes
+        self.nl = len(anchors)  # number of detection layers Detect的个数 3
+        self.na = len(anchors[0]) // 2  # number of anchors 每个feature map的anchor个数 3
+        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid {list: 3}  tensor([0.]) X 3 初始化为0
         self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # init anchor grid
+        # a =  torch.tensor(anchors).float().view(self.nl, -1, 2)#分离anchors给a;anchors以[w, h]对的形式存储  3个feature map 每个feature map上有三个anchor（w,h）
+        '''
+        register_buffer:
+        模型中需要保存的参数一般有两种:一种是反向传播需要被optimizer更新的，称为parameter; 另一种不要被更新称为buffer
+        第二种参数我们需要创建tensor，然后将tensor通过register_buffer()进行注册,可以通过model.buffers()返回，
+        注册完后参数也会自动保存到OrderDict中去。
+        |注意: buffer的更新在forward中，optim.step只能更新nn.parameter类型的参数
+
+        '''
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
+        # output conv 对每个输出的feature map都要调用一次conv1x1
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
+        # 一般都是True 默认不使用AWS Inferentia加速
         self.inplace = inplace  # use inplace ops (e.g. slice assignment)
 
     def forward(self, x):
+        """
+        :return train: 一个tensor list 存放三个元素   [bs, anchor_num, grid_w, grid_h, xywh+c+classes]
+                       分别是 [1, 3, 80, 80, 6] [1, 3, 40, 40, 6] [1, 3, 20, 20, 6]
+                inference: 0 [1, 19200+4800+1200, 6] = [bs, anchor_num*grid_w*grid_h, xywh+c+classes]
+                           1 一个tensor list 存放三个元素 [bs, anchor_num, grid_w, grid_h, xywh+c+classes]
+                             [1, 3, 80, 80, 6] [1, 3, 40, 40, 6] [1, 3, 20, 20, 6]
+        """
         z = []  # inference output
-        for i in range(self.nl):
+        for i in range(self.nl):  # 对三个feature map分别进行处理
             x[i] = self.m[i](x[i])  # conv
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
@@ -191,7 +210,7 @@ class DetectionModel(BaseModel):
         if isinstance(m, (Detect, Segment)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
-            forward = lambda x: self.forward(x)[0] if isinstance(m, Segment) else self.forward(x)
+            def forward(x): return self.forward(x)[0] if isinstance(m, Segment) else self.forward(x)
             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
             check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
