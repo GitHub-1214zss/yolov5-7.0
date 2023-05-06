@@ -749,14 +749,24 @@ class LoadImagesAndLabels(Dataset):
             np.save(f.as_posix(), cv2.imread(self.im_files[i]))
 
     def load_mosaic(self, index):
-        # YOLOv5 4-mosaic loader. Loads 1 image + 3 random images into a 4-image mosaic
+        """用在LoadImagesAndLabels模块的__getitem__函数 进行mosaic数据增强
+        将四张图片拼接在一张马赛克图像中  loads images in a 4-mosaic
+        :param index: 需要获取的图像索引
+        :return: img4: mosaic和随机透视变换后的一张图片  numpy(640, 640, 3)
+                labels4: img4对应的target  [M, cls+x1y1x2y2]
+        """
+        # labels4: 用于存放拼接图像（4张图拼成一张）的label信息(不包含segments多边形)
+        # segments4: 用于存放拼接图像（4张图拼成一张）的label信息(包含segments多边形)
         labels4, segments4 = [], []
-        s = self.img_size
+        s = self.img_size  # 一般的图片大小
+        # 随机初始化拼接图像的中心点坐标  [0, s*2]之间随机取2个数作为拼接图像的中心坐标
         yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)  # mosaic center x, y
-        indices = [index] + random.choices(self.indices, k=3)  # 3 additional image indices
+        # 从dataset中随机寻找额外的三张图像进行拼接再随机选三张图片的index
+        indices = [index] + random.choices(self.indices, k=3)
         random.shuffle(indices)
+        # 遍历四张图像进行拼接 4张不同大小的图像 => 1张图像
         for i, index in enumerate(indices):
-            # Load image
+            # load image   每次拿一张图片 并将这张图片resize到self.size(h,w)
             img, _, (h, w) = self.load_image(index)
 
             # place img in img4
@@ -806,7 +816,7 @@ class LoadImagesAndLabels(Dataset):
 
         return img4, labels4
 
-    def load_mosaic9(self, index):
+    def load_mosaic9(self, index):  # 未被使用 9章图片拼接为一个
         # YOLOv5 9-mosaic loader. Loads 1 image + 8 random images into a 9-image mosaic
         labels9, segments9 = [], []
         s = self.img_size

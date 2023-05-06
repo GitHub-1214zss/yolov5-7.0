@@ -331,7 +331,7 @@ class DetectionModel(BaseModel):
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
 
-Model = DetectionModel  # retain YOLOv5 'Model' class for backwards compatibility保留YOLOv5 'Model'类以实现向后兼容性
+Model = DetectionModel  # retain YOLOv5 'Model' class for backwards compatibility;保留YOLOv5 'Model'类以实现向后兼容性
 
 
 # 实例分割模型构造

@@ -110,33 +110,49 @@ def replicate(im, labels):
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
     # Resize and pad image while meeting stride-multiple constraints
+    """用在LoadImagesAndLabels模块的__getitem__函数  只在val时才会使用
+    将图片缩放调整到指定大小,矩阵推理
+    https://github.com/ultralytics/yolov3/issues/232
+    :param im: 原图 hwc
+    :param new_shape: 目标标准尺寸，例如一般为指定的大小如640
+    :param color: pad的颜色
+    :param auto: True 保证缩放后的图片保持原图的比例 即 将原图最长边缩放到指定大小，再将原图较短边按原图比例缩放(不会失真)缩放策略1默认矩阵填充
+                 False 将原图最长边缩放到指定大小，再将原图较短边按原图比例缩放,最后将较短边两边pad操作缩放到最长边大小(不会失真)缩放策略2
+    :param scaleFill: True 简单粗暴的将原图resize到指定的大小 相当于就是resize 没有pad操作(失真)，默认不执行
+    :param scaleup: True  对于小于new_shape的原图进行缩放,大于的不变，默认只进行下采样
+                     False 对于大于new_shape的原图进行缩放,小于的不变，设置为false后可进行上采样
+    :return: img: letterbox后的图片 HWC
+             ratio: wh ratios
+             (dw, dh): w和h的pad 宽高的填充
+    """
     shape = im.shape[:2]  # current shape [height, width]
     if isinstance(new_shape, int):
-        new_shape = (new_shape, new_shape)
+        new_shape = (new_shape, new_shape)  # new_shape 为目标标准尺寸
 
-    # Scale ratio (new / old)
+    # Scale ratio (new / old) 计算缩放因子
     r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    # 为了更好的验证集的map，只进行下采样，不上采样
     if not scaleup:  # only scale down, do not scale up (for better val mAP)
         r = min(r, 1.0)
 
     # Compute padding
-    ratio = r, r  # width, height ratios
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
-    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
-    if auto:  # minimum rectangle
+    ratio = r, r  # width, height ratios e.g.(1,1)
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))  # 新缩放尺寸，保证缩放后图像比例不变
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding 若想缩放到标准尺寸需要填充的大小
+    if auto:  # minimum rectangle 获取最小的矩阵填充,32的倍数
         dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
-    elif scaleFill:  # stretch
+    elif scaleFill:  # stretch简单粗暴的将图片缩放到指定尺寸
         dw, dh = 0.0, 0.0
         new_unpad = (new_shape[1], new_shape[0])
         ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
 
+    # 在较小边的两侧进行pad, 而不是在一侧pad
     dw /= 2  # divide padding into 2 sides
     dh /= 2
-
-    if shape[::-1] != new_unpad:  # resize
+    if shape[::-1] != new_unpad:  # resize 将原图resize到new_unpad（长边相同，比例相同的新图）
         im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
-    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))  # 计算上下两侧的padding
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))  # 计算左右两侧的padding
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return im, ratio, (dw, dh)
 
