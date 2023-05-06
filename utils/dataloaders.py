@@ -753,7 +753,7 @@ class LoadImagesAndLabels(Dataset):
         将四张图片拼接在一张马赛克图像中  loads images in a 4-mosaic
         :param index: 需要获取的图像索引
         :return: img4: mosaic和随机透视变换后的一张图片  numpy(640, 640, 3)
-                labels4: img4对应的target  [M, cls+x1y1x2y2]
+                labels4: img4对应的标签信息  [M, cls+x1y1x2y2]
         """
         # labels4: 用于存放拼接图像（4张图拼成一张）的label信息(不包含segments多边形)
         # segments4: 用于存放拼接图像（4张图拼成一张）的label信息(包含segments多边形)
@@ -766,43 +766,59 @@ class LoadImagesAndLabels(Dataset):
         random.shuffle(indices)
         # 遍历四张图像进行拼接 4张不同大小的图像 => 1张图像
         for i, index in enumerate(indices):
-            # load image   每次拿一张图片 并将这张图片resize到self.size(h,w)
+            # load image  加载图片并根据设定的图片大小与图片原大小的比例ratio进行resize
             img, _, (h, w) = self.load_image(index)
 
             # place img in img4
             if i == 0:  # top left
+                # 初始化大图
                 img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                # 计算马赛克图像中的坐标信息(将图像填充到大图左上角中) 马赛克图像：(x1a,y1a)左上角 (x2a,y2a)右下角
                 x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                # 计算截取的图像区域信息(以xc,yc为第一张图像的右下角坐标填充到马赛克图像中，丢弃越界的区域)  图像：(x1b,y1b)左上角 (x2b,y2b)右下角
                 x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
             elif i == 1:  # top right
+                # 计算马赛克图像中的坐标信息(将图像填充到大图右上角中)
                 x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+                # 计算截取的图像区域信息(以xc,yc为第二张图像的左下角坐标填充到马赛克图像中，丢弃越界的区域)
                 x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
             elif i == 2:  # bottom left
+                # 计算马赛克图像中的坐标信息(将图像填充到大图左下角中)
                 x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+                # 计算截取的图像区域信息(以xc,yc为第三张图像的右上角坐标填充到马赛克图像中，丢弃越界的区域)
                 x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
             elif i == 3:  # bottom right
+                # 计算马赛克图像中的坐标信息(将图像填充到大图右下角中)
                 x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+                # 计算截取的图像区域信息(以xc,yc为第四张图像的左上角坐标填充到马赛克图像中，丢弃越界的区域)
                 x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
-
+            # 将截取的图像区域填充到马赛克图像的相应位置   img4[h, w, c]
+            # 将图像img的【(x1b,y1b)左上角 (x2b,y2b)右下角】区域截取出来填充到马赛克图像的【(x1a,y1a)左上角 (x2a,y2a)右下角】区域
             img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
-            padw = x1a - x1b
-            padh = y1a - y1b
+            # 计算偏移(当前图像边界与马赛克边界的距离，越界的情况padw/padh为负值)  用于后面的标签框映射
+            padw = x1a - x1b  # 计算当前图像与马赛克图像在w维度上相差多少
+            padh = y1a - y1b  # 计算当前图像与马赛克图像在h维度上相差多少
 
-            # Labels
+            # Labels获取对应拼接图像的所有正常label信息(如果有segments多边形会被转化为矩形label)
+            # segments: 获取对应拼接图像的所有不正常label信息(包含segments多边形也包含正常gt)
             labels, segments = self.labels[index].copy(), self.segments[index].copy()
+            # 重新调整标签框位置
             if labels.size:
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)  # normalized xywh to pixel xyxy format
                 segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
-            labels4.append(labels)
-            segments4.extend(segments)
+            labels4.append(labels)  # 更新labels4
+            segments4.extend(segments)  # 更新segments4
 
-        # Concat/clip labels
+        # Concat/clip labels 把labels4压缩到一起
+        # 调整标签框在图片内部
         labels4 = np.concatenate(labels4, 0)
+        # 防止越界  label[:, 1:]中的所有元素的值（位置信息）必须在[0, 2*s]之间,小于0就令其等于0,大于2*s就等于2*s   out: 返回
         for x in (labels4[:, 1:], *segments4):
             np.clip(x, 0, 2 * s, out=x)  # clip when using random_perspective()
         # img4, labels4 = replicate(img4, labels4)  # replicate
 
-        # Augment
+        # Augment 随机化处理
+        # 对mosaic整合后的图片进行随机旋转、平移、缩放、裁剪，透视变换，并resize为输入大小img_size
         img4, labels4, segments4 = copy_paste(img4, labels4, segments4, p=self.hyp['copy_paste'])
         img4, labels4 = random_perspective(img4,
                                            labels4,
