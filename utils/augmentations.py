@@ -1,5 +1,6 @@
 # YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
 """
+数据增强的函数
 Image augmentation functions
 """
 
@@ -92,6 +93,13 @@ def hist_equalize(im, clahe=True, bgr=False):
 
 
 def replicate(im, labels):
+    """可以用在load_mosaic里在mosaic操作之后 random_perspective操作之前  作者默认是关闭的 自己可以实验一下效果
+    随机偏移标签中心，生成新的标签与原标签结合  Replicate labels
+    :params img: img4 因为是用在mosaic操作之后 所以size=[2*img_size, 2*img_size]
+    :params labels: mosaic整合后图片的所有正常label标签labels4(不正常的会通过segments2boxes将多边形标签转化为正常标签) [N, cls+xyxy]
+    :return img: img4 size=[2*img_size, 2*img_size] 不过图片中多了一半的较小gt个数
+    :params labels: labels4 不过另外增加了一半的较小label [3/2N, cls+xyxy]
+    """
     # Replicate labels
     h, w = im.shape[:2]
     boxes = labels[:, 1:].astype(int)
@@ -110,7 +118,7 @@ def replicate(im, labels):
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
     # Resize and pad image while meeting stride-multiple constraints
-    """用在LoadImagesAndLabels模块的__getitem__函数  只在val时才会使用
+    r"""用在LoadImagesAndLabels模块的__getitem__函数  一般只在val时才会使用
     将图片缩放调整到指定大小,矩阵推理
     https://github.com/ultralytics/yolov3/issues/232
     :param im: 原图 hwc
@@ -166,46 +174,73 @@ def random_perspective(im,
                        shear=10,
                        perspective=0.0,
                        border=(0, 0)):
+    """这个函数会用于load_mosaic中用在mosaic操作之后
+    随机透视变换  对mosaic整合后的图片进行随机旋转、缩放、平移、裁剪，透视变换，并resize为输入大小img_size
+    :params img: mosaic整合后的图片img4 [2*img_size, 2*img_size]如[1280*1280]
+    如果mosaic后的图片没有一个多边形标签就使用targets, segments为空  如果有一个多边形标签就使用segments, targets不为空
+    :params targets: mosaic整合后图片的所有正常label标签labels4(不正常的会通过segments2boxes将多边形标签转化为正常标签) [N, cls+xyxy]
+    :params segments: mosaic整合后图片的所有不正常label信息(包含segments多边形也包含正常gt)  [m, x1y1....]
+    :params degrees: 旋转和缩放矩阵参数
+    :params translate: 平移矩阵参数
+    :params scale: 缩放矩阵参数
+    :params shear: 剪切矩阵参数
+    :params perspective: 透视变换参数 默认不进行透视变换
+    :params border: 用于确定最后输出的图片大小 一般等于[-img_size, -img_size] 那么最后输出的图片大小为 [img_size, img_size]
+    :return img: 通过透视变换/仿射变换后的img [img_size, img_size]
+    :return targets: 通过透视变换/仿射变换后的img对应的标签 [n, cls+x1y1x2y2]  (通过筛选后的)
+    """
     # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(0.1, 0.1), scale=(0.9, 1.1), shear=(-10, 10))
     # targets = [cls, xyxy]
+    # 设定输出图片的 H W
+    # shape(h,w,c)1280*1280*3
+    height = im.shape[0] + border[0] * 2  # 最终输出图像的H （1280+（-320）*2）=640
+    width = im.shape[1] + border[1] * 2  # 最终输出图像的W （1280+（-320）*2）=640
 
-    height = im.shape[0] + border[0] * 2  # shape(h,w,c)
-    width = im.shape[1] + border[1] * 2
+    # 需要注意的是，其实opencv是实现了仿射变换的, 不过我们要先生成仿射变换矩阵M
+    # Center 设置中心平移矩阵
+    C = np.eye(3)  # 单位阵
+    C[0, 2] = -im.shape[1] / 2  # x translation (pixels)x平移一半即640
+    C[1, 2] = -im.shape[0] / 2  # y translation (pixels)y平移一半即640
 
-    # Center
-    C = np.eye(3)
-    C[0, 2] = -im.shape[1] / 2  # x translation (pixels)
-    C[1, 2] = -im.shape[0] / 2  # y translation (pixels)
-
-    # Perspective
+    # Perspective 设置透视变换矩阵 perspective 默认为0，矩阵无变化
     P = np.eye(3)
     P[2, 0] = random.uniform(-perspective, perspective)  # x perspective (about y)
     P[2, 1] = random.uniform(-perspective, perspective)  # y perspective (about x)
 
-    # Rotation and Scale
+    # Rotation and Scale 设置旋转和缩放矩阵
     R = np.eye(3)
+    # a: 随机生成旋转角度 范围在(-degrees, degrees)
     a = random.uniform(-degrees, degrees)
     # a += random.choice([-180, -90, 0, 90])  # add 90deg rotations to small rotations
+    # s: 随机生成旋转后图像的缩放比例 范围在(1 - scale, 1 + scale)
     s = random.uniform(1 - scale, 1 + scale)
     # s = 2 ** random.uniform(-scale, scale)
+    # 参数 angle:旋转角度  center: 旋转中心(默认就是图像的中心)  scale: 旋转后图像的缩放比例
     R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
 
-    # Shear
+    # Shear 设置剪切仿射矩阵，shear默认为0，矩阵无变化
     S = np.eye(3)
     S[0, 1] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # x shear (deg)
     S[1, 0] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # y shear (deg)
 
-    # Translation
+    # Translation 设置平移矩阵
     T = np.eye(3)
     T[0, 2] = random.uniform(0.5 - translate, 0.5 + translate) * width  # x translation (pixels)
     T[1, 2] = random.uniform(0.5 - translate, 0.5 + translate) * height  # y translation (pixels)
-
-    # Combined rotation matrix
+    # ============================ 开始变换 =============================
+    # Combined rotation matrix @ 表示矩阵乘法  生成仿射变换矩阵M （其实就只调整了中心点+平移）
     M = T @ S @ R @ P @ C  # order of operations (right to left) is IMPORTANT
+    # 将仿射变换矩阵M作用在图片上
     if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
         if perspective:
+            # 透视变换函数  实现旋转平移缩放变换后的平行线不再平行
+            # 参数和下面warpAffine类似
             im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
-        else:  # affine
+        else:  # 默认走如下
+            # 仿射变换函数  实现旋转平移缩放变换后的平行线依旧平行
+            # cv2.warpAffine: opencv实现的仿射变换函数
+            # 参数： img: 需要变化的图像   M: 变换矩阵  dsize: 输出图像的大小  flags: 插值方法的组合（int 类型！）
+            # borderValue: （重点！）边界填充值  默认情况下，它为0，此处为灰。
             im = cv2.warpAffine(im, M[:2], dsize=(width, height), borderValue=(114, 114, 114))
 
     # Visualize
@@ -214,11 +249,13 @@ def random_perspective(im,
     # ax[0].imshow(im[:, :, ::-1])  # base
     # ax[1].imshow(im2[:, :, ::-1])  # warped
 
-    # Transform label coordinates
+    # Transform label coordinates  同样需要调整标签信息
     n = len(targets)
     if n:
+        # 判断是否可以使用segment标签: 只有segments不为空时即数据集中有多边形gt也有正常gt时才能使用segment标签 use_segments=True否则如果只有正常gt时segments为空 use_segments=False
         use_segments = any(x.any() for x in segments) and len(segments) == n
         new = np.zeros((n, 4))
+        # 如果使用的是segments标签(标签中含有多边形gt)
         if use_segments:  # warp segments
             segments = resample_segments(segments)  # upsample
             for i, segment in enumerate(segments):
@@ -229,8 +266,10 @@ def random_perspective(im,
 
                 # clip
                 new[i] = segment2box(xy, width, height)
-
+        # 不使用segments标签 使用正常的矩形的标签targets
         else:  # warp boxes
+            # 直接对box透视/仿射变换
+            # 由于有旋转，透视变换等操作，所以需要对四个角点都进行变换
             xy = np.ones((n * 4, 3))
             xy[:, :2] = targets[:, [1, 2, 3, 4, 1, 4, 3, 2]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
             xy = xy @ M.T  # transform
@@ -245,8 +284,11 @@ def random_perspective(im,
             new[:, [0, 2]] = new[:, [0, 2]].clip(0, width)
             new[:, [1, 3]] = new[:, [1, 3]].clip(0, height)
 
-        # filter candidates
+        # filter candidates 过滤target 筛选box 数据增强前后box
+        # 长和宽必须大于wh_thr个像素 裁剪过小的框(面积小于裁剪前的area_thr)  长宽比范围在(1/ar_thr, ar_thr)之间的限制
+        # 筛选结果 [n] 全是True或False   使用比如: box1[i]即可得到i中所有等于True的矩形框 False的矩形框全部删除
         i = box_candidates(box1=targets[:, 1:5].T * s, box2=new.T, area_thr=0.01 if use_segments else 0.10)
+        # 得到所有满足条件的targets
         targets = targets[i]
         targets[:, 1:5] = new[i]
 
@@ -303,18 +345,42 @@ def cutout(im, labels, p=0.5):
 
 
 def mixup(im, labels, im2, labels2):
-    # Applies MixUp augmentation https://arxiv.org/pdf/1710.09412.pdf
+    """用在LoadImagesAndLabels模块中的__getitem__函数进行mixup增强
+    mixup数据增强, 按比例融合两张图片  
+    Applies MixUp augmentation 论文: https://arxiv.org/pdf/1710.09412.pdf
+    :params im:图片1  numpy (640, 640, 3)
+    :params labels:[N, 5]=[N, cls+x1y1x2y2]
+    :params im2:图片2  (640, 640, 3)
+    :params labels2:[M, 5]=[M, cls+x1y1x2y2]
+    :return img: 两张图片mixup增强后的图片 (640, 640, 3)
+    :return labels: 两张图片mixup增强后的label标签 [M+N, cls+x1y1x2y2]
+    """
+    # 随机从beta分布中获取比例,range[0, 1]
     r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
+    # 按照比例融合两张图片
     im = (im * r + im2 * (1 - r)).astype(np.uint8)
+    # 将两张图片标签拼接到一起
     labels = np.concatenate((labels, labels2), 0)
     return im, labels
 
 
 def box_candidates(box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
+    """用在random_perspective中 对透视变换后的图片label进行筛选
+    去除被裁剪过小的框(面积小于裁剪前的area_thr) 、还有长和宽必须大于wh_thr个像素、且长宽比范围在(1/ar_thr, ar_thr)之间
+    Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
+    :params box1: [4, n]
+    :params box2: [4, n]
+    :params wh_thr: 筛选条件 宽高阈值
+    :params ar_thr: 筛选条件 宽高比、高宽比最大值阈值
+    :params area_thr: 筛选条件 面积阈值
+    :params eps: 1e-16 接近0的数 防止分母为0
+    :return i: 筛选结果 [n] 全是True或False   使用比如: box1[i]即可得到i中所有等于True的矩形框 False的矩形框全部删除
+    """
     # Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
-    w1, h1 = box1[2] - box1[0], box1[3] - box1[1]
-    w2, h2 = box2[2] - box2[0], box2[3] - box2[1]
+    w1, h1 = box1[2] - box1[0], box1[3] - box1[1]  # 求出所有box1矩形框的宽和高  [n] [n]
+    w2, h2 = box2[2] - box2[0], box2[3] - box2[1]  # 求出所有box2矩形框的宽和高  [n] [n]
     ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
+    # 筛选条件: 增强后w、h要大于2像素   增强后图像与增强前图像面积比值大于area_thr   宽高比大于ar_thr
     return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
 
 
