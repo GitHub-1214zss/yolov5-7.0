@@ -53,16 +53,23 @@ VERBOSE = str(os.getenv('YOLOv5_VERBOSE', True)).lower() == 'true'  # global ver
 TQDM_BAR_FORMAT = '{l_bar}{bar:10}{r_bar}'  # tqdm bar format
 FONT = 'Arial.ttf'  # https://ultralytics.com/assets/Arial.ttf
 
+# 设置运行相关的一些基本的配置  Settings
+# 控制print打印torch.tensor格式设置  tensor精度为5(小数点后5位)  每行字符数为320个  显示方法为long
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
+# 控制print打印np.array格式设置  精度为5  每行字符数为320个  format short g, %precision=5
 np.set_printoptions(linewidth=320, formatter={'float_kind': '{:11.5g}'.format})  # format short g, %precision=5
+# pandas的最大显示行数是10
 pd.options.display.max_columns = 10
+# 阻止opencv参与多线程(与 Pytorch的 Dataloader不兼容)
 cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with PyTorch DataLoader)
+# 确定最大的线程数 这里被限制在了8
 os.environ['NUMEXPR_MAX_THREADS'] = str(NUM_THREADS)  # NumExpr max threads
 os.environ['OMP_NUM_THREADS'] = '1' if platform.system() == 'darwin' else str(NUM_THREADS)  # OpenMP (PyTorch and SciPy)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # suppress verbose TF compiler warnings in Colab
 
 
 def is_ascii(s=''):
+    '''判断字符串中是否只包含 ASCII 字符'''
     # Is string composed of all ASCII (no UTF) characters? (note str().isascii() introduced in python 3.7)
     s = str(s)  # convert list, tuple, None, etc. to str
     return len(s.encode().decode('ascii', 'ignore')) == len(s)
@@ -74,6 +81,7 @@ def is_chinese(s='人工智能'):
 
 
 def is_colab():
+    '''检查当前环境是否是Google Colab环境'''
     # Is environment a Google Colab instance?
     return 'google.colab' in sys.modules
 
@@ -93,6 +101,7 @@ def is_jupyter():
 
 
 def is_kaggle():
+    '''检查当前环境是否是Kaggle Notebook'''
     # Is environment a Kaggle Notebook?
     return os.environ.get('PWD') == '/kaggle/working' and os.environ.get('KAGGLE_URL_BASE') == 'https://www.kaggle.com'
 
@@ -126,6 +135,7 @@ LOGGING_NAME = 'yolov5'
 
 
 def set_logging(name=LOGGING_NAME, verbose=True):
+    '''广泛使用在train.py、val.py、detect.py等文件的main函数的第一步 对日志的设置(format、level)等进行初始化,同时设置日志级别等'''
     # sets up logging for the given name
     rank = int(os.getenv('RANK', -1))  # rank in world for Multi-GPU trainings
     level = logging.INFO if verbose and rank in {-1, 0} else logging.ERROR
@@ -246,6 +256,7 @@ def print_args(args: Optional[dict] = None, show_file=True, show_func=False):
 
 
 def init_seeds(seed=0, deterministic=False):
+    '''初始化随机数种子'''
     # Initialize random number generator (RNG) seeds https://pytorch.org/docs/stable/notes/randomness.html
     random.seed(seed)
     np.random.seed(seed)
@@ -272,8 +283,18 @@ def get_default_args(func):
 
 
 def get_latest_run(search_dir='.'):
+    '''获取最近训练的权重文件，last.pt
+    进行断点续训等
+
+    用于返回该项目中最近的模型 'last.pt'对应的路径
+
+    :params search_dir: 要搜索的文件的根目录 默认是 '.'  表示搜索该项目中的文件
+    '''
     # Return path to most recent 'last.pt' in /runs (i.e. to --resume from)
+    # glob.glob函数匹配所有的符合条件的文件, 并将其以list的形式返回
     last_list = glob.glob(f'{search_dir}/**/last*.pt', recursive=True)
+    # os.path.getctime 返回路径对应文件的创建时间
+    # 所以这里是返回路径列表中创建时间最晚(最近的last文件)的路径
     return max(last_list, key=os.path.getctime) if last_list else ''
 
 
@@ -440,7 +461,11 @@ def check_requirements(requirements=ROOT.parent / 'requirements.txt', exclude=()
 
 
 def check_img_size(imgsz, s=32, floor=0):
-    # Verify image size is a multiple of stride s in each dimension
+    """用来检查图片的长宽是否符合规定并调整
+    检查img_size是否是s(默认32)的整数倍  不是则返回大于等于img_size且是s的最小倍数
+    这个函数主要用于train.py中和detect.py中  
+    """
+    # 取大于等于x的最小值且该值能被32整除
     if isinstance(imgsz, int):  # integer i.e. img_size=640
         new_size = max(make_divisible(imgsz, int(s)), floor)
     else:  # list i.e. img_size=[640, 480]
@@ -452,7 +477,7 @@ def check_img_size(imgsz, s=32, floor=0):
 
 
 def check_imshow(warn=False):
-    # Check if environment supports image displays
+    '''Check if environment supports image displays'''
     try:
         assert not is_jupyter()
         assert not is_docker()

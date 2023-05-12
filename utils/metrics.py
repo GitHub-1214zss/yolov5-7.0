@@ -1,6 +1,8 @@
 # YOLOv5 🚀 by Ultralytics, AGPL-3.0 license
 """
 Model validation metrics
+# 该文件通过训练的预测结果与gt结合计算出P、R、F1-score、AP、不同IOU阈值下的mAP等。同时还能对上述指标进行可视化
+# 可以绘制混淆矩阵以及P-R曲线
 """
 
 import math
@@ -31,15 +33,31 @@ def smooth(y, f=0.05):
 def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names=(), eps=1e-16, prefix=''):
     """ Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
-    # Arguments
+    Arguments
         tp:  True positives (nparray, nx1 or nx10).
         conf:  Objectness value from 0-1 (nparray).
-        pred_cls:  Predicted object classes (nparray).
-        target_cls:  True object classes (nparray).
+        pred_cls:  预测物体类别 (nparray).
+        target_cls:  真实物体类别 (nparray).
         plot:  Plot precision-recall curve at mAP@0.5
         save_dir:  Plot save directory
     # Returns
-        The average precision as computed in py-faster-rcnn.
+        平均精度
+    计算每一个类的AP指标(average precision)还可以 绘制P-R曲线
+    mAP基本概念: https://www.bilibili.com/video/BV1ez4y1X7g2
+    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics
+    :params tp(correct):bool 所有预测框在每一个iou条件下(0.5~0.95)10个是否是TP
+    :params conf:  所有预测框的conf
+    :params pred_cls:  所有预测框的类别
+    这里的tp、conf、pred_cls是一一对应的
+    :params target_cls:  所有gt框的class
+    :params plot: bool 是否绘图
+    :params save_dir: 绘图保存地址
+    :params names: dict{key(class_index):value(class_name)} 获取数据集所有类别的index和对应类名
+    :return p[:, i]: [nc] 最大平均f1时每个类别的precision
+    :return r[:, i]: [nc] 最大平均f1时每个类别的recall
+    :return ap: [71, 10] 数据集每个类别在10个iou阈值下的mAP
+    :return f1[:, i]: [nc] 最大平均f1时每个类别的f1
+    :return unique_classes.astype('int32'): [nc] 返回数据集中所有的类别index
     """
 
     # Sort by objectness
