@@ -38,8 +38,8 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
         conf:  Objectness value from 0-1 (nparray).
         pred_cls:  预测物体类别 (nparray).
         target_cls:  真实物体类别 (nparray).
-        plot:  Plot precision-recall curve at mAP@0.5
-        save_dir:  Plot save directory
+        plot:  是否绘制pr曲线 map0.5
+        save_dir: 绘图保存地址
     # Returns
         平均精度
     计算每一个类的AP指标(average precision)还可以 绘制P-R曲线
@@ -61,32 +61,51 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, save_dir='.', names
     """
 
     # Sort by objectness
+    # 计算mAP 需要将tp按照conf降序排列   返回数据对应的索引
     i = np.argsort(-conf)
+    # 得到重新排序后对应的 tp, conf, pre_cls
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
 
     # Find unique classes
+    # Find unique classes  对类别去重, 因为计算ap是对每类进行
     unique_classes, nt = np.unique(target_cls, return_counts=True)
-    nc = unique_classes.shape[0]  # number of classes, number of detections
+    nc = unique_classes.shape[0]  # number of classes, number of detections  数据集类别数
 
     # Create Precision-Recall curve and compute AP for each class
+    # px: [0, 1] 中间间隔1000个点 x坐标(用于绘制P-Conf、R-Conf、F1-Conf)
+    # py: y坐标[] 用于绘制IOU=0.5时的PR曲线 即绘制map0.5的pr图
     px, py = np.linspace(0, 1, 1000), []  # for plotting
+    # 初始化 对每一个类别在每一个IOU阈值下 计算AP P R   ap=[nc, 10]  p=[nc, 1000] r=[nc, 1000]
     ap, p, r = np.zeros((nc, tp.shape[1])), np.zeros((nc, 1000)), np.zeros((nc, 1000))
-    for ci, c in enumerate(unique_classes):
+    for ci, c in enumerate(unique_classes):  # ci: index 0   c: class 0  unique_classes: 所有gt中不重复的类
+        # i: 记录着所有预测框是否是c类别框   是c类对应位置为True, 否则为False
         i = pred_cls == c
+        # n_l: gt框中的c类别框数量 nt记录了每个类别在真实框中出现的次数，而在计算AP时需要使用到每个类别的正样本数量，因此需要通过nt来获取每个类别的正样本数量
         n_l = nt[ci]  # number of labels
+        # n_p: 预测框中c类别的框数量
         n_p = i.sum()  # number of predictions
+        # 如果没有预测到 或者 ground truth没有标注 则略过类别c
         if n_p == 0 or n_l == 0:
             continue
 
         # Accumulate FPs and TPs
+        # Accumulate FPs(False Positive) and TPs(Ture Positive)   FP + TP = all_detections
+        # tp[i] 可以根据i中的的True/False觉定是否删除这个数  所有tp中属于类c的预测框
+        # a.cumsum(0)  会按照对象进行累加操作
+        # fpc: 类别为c 顺序按置信度排列 截至到每一个预测框的各个iou阈值下FP个数 最后一行表示c类在该iou阈值下所有FP数
+        # tpc: 类别为c 顺序按置信度排列 截至到每一个预测框的各个iou阈值下TP个数 最后一行表示c类在该iou阈值下所有TP数
         fpc = (1 - tp[i]).cumsum(0)
         tpc = tp[i].cumsum(0)
 
-        # Recall
+        # Recall=TP/(TP+FN)  加一个eps = 1e-16的目的是防止分母为0
+        # n_l=TP+FN=num_gt: c类的gt个数=预测是c类而且预测正确+预测不是c类但是预测错误
+        # recall: 类别为c 顺序按置信度排列 截至每一个预测框的各个iou阈值下的召回率
         recall = tpc / (n_l + eps)  # recall curve
+        # 返回所有类别, 横坐标为conf(值为px=[0, 1, 1000] 0~1 1000个点)对应的recall值  r=[nc, 1000]  每一行从小到大
         r[ci] = np.interp(-px, -conf[i], recall[:, 0], left=0)  # negative x, xp because xp decreases
 
-        # Precision
+        # Precision=TP/(TP+FP)
+        # precision: 类别为c 顺序按置信度排列 截至每一个预测框的各个iou阈值下的精确率
         precision = tpc / (tpc + fpc)  # precision curve
         p[ci] = np.interp(-px, -conf[i], precision[:, 0], left=1)  # p at pr_score
 

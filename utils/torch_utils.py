@@ -87,6 +87,11 @@ def reshape_classifier_output(model, n=1000):
 
 @contextmanager
 def torch_distributed_zero_first(local_rank: int):
+    """用在train.py
+    用于处理模型进行分布式训练时同步问题
+    基于torch.distributed.barrier()函数的上下文管理器，为了完成数据的正常同步操作（yolov5中拥有大量的多线程并行操作）
+    :params local_rank: 代表当前进程号  0代表主进程  1、2、3代表子进程
+    """
     # Decorator to make all processes in distributed training wait for each local_master to do something
     if local_rank not in [-1, 0]:
         dist.barrier(device_ids=[local_rank])
@@ -316,17 +321,19 @@ def copy_attr(a, b, include=(), exclude=()):
 
 
 def smart_optimizer(model, name='Adam', lr=0.001, momentum=0.9, decay=1e-5):
+    # 总的来说，这个实现的优化器可以根据模型结构自动适应不同类型的参数，并使用不同的学习率和权重衰减进行训练，从而提高了训练的效率和精度。
     # YOLOv5 3-param group optimizer: 0) weights with decay, 1) weights no decay, 2) biases no decay
+    # 针对这三类参数，使用了不同的学习率和权重衰减设置
     g = [], [], []  # optimizer parameter groups
     bn = tuple(v for k, v in nn.__dict__.items() if 'Norm' in k)  # normalization layers, i.e. BatchNorm2d()
     for v in model.modules():
         for p_name, p in v.named_parameters(recurse=0):
-            if p_name == 'bias':  # bias (no decay)
+            if p_name == 'bias':  # bias (no decay) 没有权重衰减的偏置项
                 g[2].append(p)
-            elif p_name == 'weight' and isinstance(v, bn):  # weight (no decay)
+            elif p_name == 'weight' and isinstance(v, bn):  # weight (no decay)不具有权重衰减的权重，如 BatchNorm2d 的权重
                 g[1].append(p)
             else:
-                g[0].append(p)  # weight (with decay)
+                g[0].append(p)  # weight (with decay) 具有权重衰减（decay）的权重
 
     if name == 'Adam':
         optimizer = torch.optim.Adam(g[2], lr=lr, betas=(momentum, 0.999))  # adjust beta1 to momentum
@@ -359,7 +366,7 @@ def smart_hub_load(repo='ultralytics/yolov5', model='yolov5s', **kwargs):
 
 
 def smart_resume(ckpt, optimizer, ema=None, weights='yolov5s.pt', epochs=300, resume=True):
-    # Resume training from a partially trained checkpoint
+    '''Resume training from a partially trained checkpoint'''
     best_fitness = 0.0
     start_epoch = ckpt['epoch'] + 1
     if ckpt['optimizer'] is not None:

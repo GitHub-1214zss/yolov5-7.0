@@ -363,7 +363,7 @@ class Concat(nn.Module):
 
 
 class DetectMultiBackend(nn.Module):
-    '''各种后端上的推理YOLOv5 ;MultiBackend class for python inference on various backends'''
+    '''各种后端上的推理YOLOv5 ;MultiBackend类，用于在各种后端进行python推理'''
     # YOLOv5 MultiBackend class for python inference on various backends
 
     def __init__(self, weights='yolov5s.pt', device=torch.device('cpu'), dnn=False, data=None, fp16=False, fuse=True):

@@ -272,6 +272,11 @@ def init_seeds(seed=0, deterministic=False):
 
 
 def intersect_dicts(da, db, exclude=()):
+    """用于train.py中载入预训练模型时，筛选预训练权重中的键值对
+    用于筛选字典中的键值对  将db中的键值对复制给da,但是除了exclude中的键值对
+    返回da的键值对
+    """
+    # 返回字典da中的键值对  要求键k在字典db中且全部都不在exclude中 同时da中值的shape对应db中值的shape(相同)
     # Dictionary intersection of matching keys and shapes, omitting 'exclude' keys, using da values
     return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
 
@@ -509,6 +514,7 @@ def check_yaml(file, suffix=('.yaml', '.yml')):
 
 
 def check_file(file, suffix=''):
+    '''检查相关文件路径能否找到文件 并返回文件名'''
     # Search/download file (if necessary) and return path
     check_suffix(file, suffix)  # optional
     file = str(file)  # convert to str()
@@ -547,6 +553,12 @@ def check_font(font=FONT, progress=False):
 
 
 def check_dataset(data, autodownload=True):
+    """用在train.py和detect.py中 检查本地有没有数据集
+    检查数据集 如果本地没有则从torch库中下载并解压数据集
+    :params data: 是一个解析过的data_dict   len=7
+                  例如: ['path'='../datasets/coco128', 'train','val', 'test', 'nc', 'names', 'download']
+    :params autodownload: 如果本地没有数据集是否需要直接从torch库中下载数据集  默认True
+    """
     # Download, check and/or unzip dataset if not found locally
 
     # Download (optional)
@@ -727,6 +739,8 @@ def clean_str(s):
 
 
 def one_cycle(y1=0.0, y2=1.0, steps=100):
+    '''
+    one_cycle lr  lr先增加, 再减少, 再以更小的斜率减少'''
     # lambda function for sinusoidal ramp from y1 to y2 https://arxiv.org/pdf/1812.01187.pdf
     return lambda x: ((1 - math.cos(x * math.pi / steps)) / 2) * (y2 - y1) + y1
 
@@ -1049,6 +1063,9 @@ def non_max_suppression(
 
 
 def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_optimizer()
+    '''
+    从已经训练好的模型文件中删除优化器相关的信息，并将模型参数转换为 float16 类型（即半精度浮点数类型），以便在移动设备上进行部署和推理
+    '''
     # Strip optimizer from 'f' to finalize training, optionally save as 's'
     x = torch.load(f, map_location=torch.device('cpu'))
     if x.get('ema'):

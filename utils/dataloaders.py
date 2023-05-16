@@ -1081,7 +1081,7 @@ class LoadImagesAndLabels(Dataset):
     @staticmethod
     def collate_fn(batch):  # 整理函数，对batch稍作改变，将image和lable整合到一起
         """这个函数会在create_dataloader中生成dataloader时调用:
-        整理函数  将image和label整合到一起
+        整理函数  将一个batch内的image和label整合到一起
         :return torch.stack(img, 0): 如[16, 3, 640, 640] 整个batch的图片
         :return torch.cat(label, 0): 如[15, 6] [num_target, img_index+class_index+xywh(normalized)] 整个batch的label
         :return path: 整个batch所有图片的路径
@@ -1114,6 +1114,13 @@ class LoadImagesAndLabels(Dataset):
 
     @staticmethod
     def collate_fn4(batch):
+        """可以将4张mosaic图片[1, 3, 640, 640]合成一张大的mosaic图片[1, 3, 1280, 1280]
+        同样在create_dataloader中生成dataloader时调用:
+        这里是yolo-v5作者实验性的一个代码  当train.py的opt参数quad=True 则调用collate_fn4代替collate_fn
+        作用:  如之前用collate_fn可以返回图片[16, 3, 640, 640] 经过collate_fn4则返回图片[4, 3, 1280, 1280]
+              将4张mosaic图片[1, 3, 640, 640]合成一张大的mosaic图片[1, 3, 1280, 1280]
+              将一个batch的图片每四张处理, 0.5的概率将四张图片拼接到一张大图上训练, 0.5概率直接将某张图片上采样两倍训练
+        """
         im, label, path, shapes = zip(*batch)  # transposed
         n = len(shapes) // 4
         im4, label4, path4, shapes4 = [], [], path[:n], shapes[:n]
