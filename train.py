@@ -148,7 +148,7 @@ def train(hyp, opt, device, callbacks):
         LOGGER.info(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}')  # report
     else:
         model = Model(cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
-    # amp = check_amp(model)  # check AMP
+    amp = check_amp(model)  # check AMP
 
     # Freeze 冻结权重层
     # 这里只是给了冻结权重层的一个例子, 但是作者并不建议冻结权重层, 训练全部层参数, 可以得到更好的性能, 当然也会更慢
@@ -166,7 +166,7 @@ def train(hyp, opt, device, callbacks):
 
     # Batch size
     if RANK == -1 and batch_size == -1:  # single-GPU only,auto estimate best batch size
-        batch_size = check_train_batch_size(model, imgsz, True)
+        batch_size = check_train_batch_size(model, imgsz, amp)
         loggers.on_params_update({'batch_size': batch_size})
 
     # ============================================== 2、优化器 =================================================
