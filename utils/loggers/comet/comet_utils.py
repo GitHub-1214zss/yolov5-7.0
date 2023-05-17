@@ -122,8 +122,7 @@ def check_comet_weights(opt):
 
 
 def check_comet_resume(opt):
-    """Restores run parameters to its original state based on the model checkpoint
-    and logged Experiment parameters.
+    """根据模型检查点将运行参数恢复到其原始状态并记录实验参数。
 
     Args:
         opt (argparse.Namespace): Command Line arguments passed

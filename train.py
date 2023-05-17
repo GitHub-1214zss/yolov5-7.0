@@ -80,7 +80,7 @@ def train(hyp, opt, device, callbacks):
     (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
     last, best = w / 'last.pt', w / 'best.pt'
 
-    # 超参进化配置1
+    # hyp.yaml加载
     if isinstance(hyp, str):
         with open(hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict
@@ -92,12 +92,16 @@ def train(hyp, opt, device, callbacks):
         yaml_save(save_dir / 'hyp.yaml', hyp)
         yaml_save(save_dir / 'opt.yaml', vars(opt))
 
-    # 日志管理，断点续训
+    # 记录器、断点续训参数获取
     data_dict = None
     if RANK in {-1, 0}:
         loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)  # loggers instance
 
         # Register actions
+        '''Loggers类实例loggers中的各种方法都被注册为回调函数，
+        用于记录训练过程中的各种信息，例如记录训练和验证损失、记录学习率以及记录模型权重等。
+        这些信息将被记录到指定的目录(save_dir)中，
+        以便在训练完成后进行查看和分析'''
         for k in methods(loggers):
             callbacks.register_action(k, callback=getattr(loggers, k))
 
@@ -106,14 +110,14 @@ def train(hyp, opt, device, callbacks):
         if resume:  # If resuming runs from remote artifact
             weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
 
-    # 配置1，获取数据集
+    # 数据集路径、类别数、类别名，设备类型，随机数种子
     plots = not evolve and not opt.noplots  # create plots 是否需要画图: 所有的labels信息、前三次迭代的barch、训练结果等
     cuda = device.type != 'cpu'
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
     ''' 
     在分布式训练环境中，使用 torch_distributed_zero_first 上下文管理器包装代码块，实现 Tensor 同步。
     with 关键字用于创建上下文管理器，并执行其中包含的代码块
-    如果 data_dict 是 None，则使用 check_dataset(data) 函数来创建一个数据字典(下载数据)，并将其赋值给 data_dict 变量。
+    如果 data_dict 是 None，则使用 check_dataset(data) 函数来创建一个数据字典(无则下载数据)，并将其赋值给 data_dict 变量。
     '''
     with torch_distributed_zero_first(LOCAL_RANK):  # tensor同步
         data_dict = data_dict or check_dataset(data)  # 检查数据集，没有则下载
@@ -133,9 +137,9 @@ def train(hyp, opt, device, callbacks):
         # 这里下载是去google云盘下载, 一般会下载失败,所以建议自行去github中下载再放到weights下
         # with torch_distributed_zero_first(LOCAL_RANK):
         #     weights = attempt_download(weights)  # download if not found locally
-        # 加载模型及参数
+        # 权重文件加载到ckpt变量中，并将它们转移到CPU上以避免CUDA内存泄漏
         ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
-        # 这里加载模型有两种方式，一种是直接通过opt.cfg(即yolov5s.yaml) 另一种是断点续训时通过ckpt['model'].yaml
+        # 这里加载模型有两种方式，一种是直接通过opt.cfg(即yolov5s.yaml) 另一种是断点续训时通过ckpt['model'].yaml,此时cfg为''
         model = Model(cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         # 如果resume则不加载anchor
         # 原因: 保存的模型会保存anchors，有时候用户自定义了anchor之后，再resume，则原来基于coco数据集的anchor会自己覆盖自己设定的anchor
@@ -308,7 +312,7 @@ def train(hyp, opt, device, callbacks):
     # start training -----------------------------------------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         callbacks.run('on_train_epoch_start')
-        model.train()
+        model.train()  # 将模型设置为训练模式
 
         # Update image weights (optional, single-GPU only)并不一定好  默认是False的
         # 如果为True 进行图片采样策略(按数据集各类别权重采样)
@@ -357,7 +361,7 @@ def train(hyp, opt, device, callbacks):
                     if 'momentum' in x:
                         x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
-            # Multi-scale 多尺度训练   从[imgsz*0.5, imgsz*1.5+gs]间随机选取一个尺寸(32的倍数)作为当前batch的尺寸送入模型开始训练
+            # Multi-scale 多尺度训练默认false   从[imgsz*0.5, imgsz*1.5+gs]间随机选取一个尺寸(32的倍数)作为当前batch的尺寸送入模型开始训练
             # imgsz: 默认训练尺寸   gs: 模型最大步长=32   [32 16 8]
             if opt.multi_scale:
                 sz = random.randrange(int(imgsz * 0.5), int(imgsz * 1.5) + gs) // gs * gs  # size
@@ -368,7 +372,7 @@ def train(hyp, opt, device, callbacks):
 
             # Forward 前向传播 混合精度训练 开启autocast的上下文
             with torch.cuda.amp.autocast(amp):
-                pred = model(imgs)  # forward
+                pred = model(imgs)  # forward 即推理一帧
                 # 计算损失，包括分类损失，置信度损失和框的回归损失
                 # loss为总损失值  loss_items为一个元组，包含分类损失、置信度损失、框的回归损失和总损失
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
@@ -382,7 +386,7 @@ def train(hyp, opt, device, callbacks):
             # Backward 反向传播  将梯度放大防止梯度的underflow（amp混合精度训练）
             scaler.scale(loss).backward()
 
-            # Optimize - https://pytorch.org/docs/master/notes/amp_examples.html
+            # 优化器 - https://pytorch.org/docs/master/notes/amp_examples.html
             # 模型反向传播accumulate次（iterations）后再根据累计的梯度更新一次参数
             if ni - last_opt_step >= accumulate:
                 scaler.unscale_(optimizer)  # unscale gradients
@@ -508,7 +512,7 @@ def train(hyp, opt, device, callbacks):
                         compute_loss=compute_loss)  # val best model with plots
                     if is_coco:  # coco评价
                         callbacks.run('on_fit_epoch_end', list(mloss) + list(results) + lr, epoch, best_fitness, fi)
-        # 调用 callbacks.run 方法，运行各个回调函数中的 on_train_end 和 on_fit_epoch_end 方法，完成训练过程的收尾工作
+        # 调用 callbacks.run 方法，运行各个回调函数中的 on_train_end 方法，完成训练过程的收尾工作
         callbacks.run('on_train_end', last, best, epoch, results)
 
     # 释放显存
