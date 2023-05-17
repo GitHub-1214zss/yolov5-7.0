@@ -121,7 +121,8 @@ def create_dataloader(path,
                       prefix='',
                       shuffle=False,
                       seed=0):
-    """在train.py中被调用，用于生成Trainloader, dataset，testloader
+    """用于实现数据的批量加载和处理
+    在train.py中被调用，用于生成Trainloader, dataset，testloader
     自定义dataloader函数: 调用LoadImagesAndLabels获取数据集(包括数据增强) + 调用分布式采样器DistributedSampler +
                         自定义InfiniteDataLoader 进行永久持续的采样数据
     :param path: 图片数据加载路径 train/test  如: ../datasets/VOC/images/train2007
@@ -143,6 +144,7 @@ def create_dataloader(path,
     if rect and shuffle:
         LOGGER.warning('WARNING ⚠️ --rect is incompatible with DataLoader shuffle, setting shuffle=False')
         shuffle = False
+    # 完成数据正常同步
     with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
         dataset = LoadImagesAndLabels(
             path,
@@ -163,6 +165,7 @@ def create_dataloader(path,
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
     loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    # 随机数种子，用于在数据加载过程中进行数据增强的操作
     generator = torch.Generator()
     generator.manual_seed(6148914691236517205 + seed + RANK)
     return loader(dataset,
@@ -177,9 +180,9 @@ def create_dataloader(path,
 
 
 class InfiniteDataLoader(dataloader.DataLoader):
-    """ Dataloader that reuses workers
-
-    Uses same syntax as vanilla DataLoader
+    """
+    重用工作线程的数据加载程序使用与普通Datalnader相同的语法
+    使用InfiniteDataLoader和_RepeatSampler来对DataLoader进行封装, 代替原先的DataLoader, 能够永久持续的采样数据
     """
 
     def __init__(self, *args, **kwargs):
@@ -495,6 +498,7 @@ def img2label_paths(img_paths):
 
 class LoadImagesAndLabels(Dataset):
     '''
+    读取图像和标签，并进行数据增强和预处理操作
     自定义的数据集，定义LoadImagesAndLabels类，继承自Dataset，重写抽象方法:__len()__,__getitem()__
     在训练和测试时加载图片和标签
     '''
@@ -517,6 +521,7 @@ class LoadImagesAndLabels(Dataset):
                  min_items=0,
                  prefix=''):
         """
+        初始化函数，用于设置数据加载的参数，并调用相应的函数进行数据预处理和增强操作
         初始化过程并没有什么实质性的操作,更多是一个定义参数的过程(self参数),以便在__getitem()__中进行数据增强操作,
         所以这部分代码只需要抓住self中的各个变量的含义就算差不多了
         self.img_files: {list: N} 存放着整个数据集图片的相对路径
@@ -775,6 +780,7 @@ class LoadImagesAndLabels(Dataset):
 
     def __getitem__(self, index):
         """
+        返回指定索引位置的图像和标签数据
         这部分是数据增强函数，一般一次性执行batch_size次。
         训练 数据增强: mosaic(random_perspective) + hsv + 上下左右翻转
         测试 数据增强: letterbox
@@ -880,6 +886,7 @@ class LoadImagesAndLabels(Dataset):
     def load_image(self, i):
         r"""用在LoadImagesAndLabels模块的__getitem__函数和load_mosaic模块中
         从self或者从对应图片路径中载入对应index的图片 并将原图中hw中较大者扩展到self.img_size, 较小者同比例扩展
+        加载指定索引位置的图像数据
         loads 1 image from dataset, returns img, original hw, resized hw
         :params self: 一般是导入LoadImagesAndLabels中的self
         :param index: 当前图片的index

@@ -137,7 +137,7 @@ def train(hyp, opt, device, callbacks):
         # 这里下载是去google云盘下载, 一般会下载失败,所以建议自行去github中下载再放到weights下
         # with torch_distributed_zero_first(LOCAL_RANK):
         #     weights = attempt_download(weights)  # download if not found locally
-        # 权重文件加载到ckpt变量中，并将它们转移到CPU上以避免CUDA内存泄漏
+        # 权重文件加载到ckpt变量中，并将它们转移到CPU上以避免CUDA内存泄漏，ckpt为一个字典
         ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
         # 这里加载模型有两种方式，一种是直接通过opt.cfg(即yolov5s.yaml) 另一种是断点续训时通过ckpt['model'].yaml,此时cfg为''
         model = Model(cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
@@ -162,7 +162,7 @@ def train(hyp, opt, device, callbacks):
         # v.register_hook(lambda x: torch.nan_to_num(x))  # NaN to 0 (commented for erratic training results)
         if any(x in k for x in freeze):
             LOGGER.info(f'freezing {k}')
-            v.requires_grad = False
+            v.requires_grad = False  # 不进行梯度计算
 
     # 图像尺寸相关
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)最大下采样倍数为32倍
@@ -174,8 +174,8 @@ def train(hyp, opt, device, callbacks):
         loggers.on_params_update({'batch_size': batch_size})
 
     # ============================================== 2、优化器 =================================================
-    # nbs 标称的batch_size,模拟的batch_size 比如默认的话上面设置的opt.batch_size=16 -> nbs=64
-    # 也就是模型梯度累计 64/16=4(accumulate) 次之后就更新一次模型 等于变相的扩大了batch_size
+    # nbs 标称的batch_size,比如默认设置的opt.batch_size=16 以及 此处nbs=64
+    # 则模型梯度累计 64/16=4(accumulate) 次之后就更新一次模型 等于变相的扩大了batch_size
     nbs = 64  # nominal batch size 名义上的batchsize
     accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
     # 根据accumulate设置超参: 权重衰减参数
@@ -221,6 +221,7 @@ def train(hyp, opt, device, callbacks):
 
     # ============================================== 4、数据加载 ===============================================
     # Trainloader
+    # train_loader 为InfiniteDataLoader；dataset为LoadImagesAndLabels
     train_loader, dataset = create_dataloader(train_path,
                                               imgsz,
                                               batch_size // WORLD_SIZE,
@@ -554,7 +555,7 @@ def parse_opt(known=False):
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     # quad: dataloader取数据时, 是否使用collate_fn4代替collate_fn  默认False
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
-    # 是否使用余弦学习率调度器（cosine learning rate scheduler）来更新神经网络的学习率
+    # 是否使用coslr学习率调度器（cosine learning rate scheduler）来更新神经网络的学习率
     parser.add_argument('--cos-lr', action='store_true', help='cosine LR scheduler')
     # 标签平滑增强 默认0.0不增强  要增强一般就设为0.1
     parser.add_argument('--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon')
@@ -571,7 +572,7 @@ def parse_opt(known=False):
     parser.add_argument('--upload_dataset', nargs='?', const=True, default=False, help='Upload data, "val" option')
     parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval')
     parser.add_argument('--artifact_alias', type=str, default='latest', help='Version of dataset artifact to use')
-
+    # 如果运行命令中传入了之后才会获取到的其他配置，如传入入--config222不会报错；而是将未知的部分保存起来，留到后面使用
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
@@ -584,6 +585,7 @@ def main(opt, callbacks=Callbacks()):
 
     # Resume (from specified or most recent last.pt)断点续训
     if opt.resume and not check_comet_resume(opt) and not opt.evolve:
+        # 指定从某个.pt文件或者自动从last.pt续训
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
         opt_yaml = last.parent.parent / 'opt.yaml'  # train options yaml
         opt_data = opt.data  # original dataset
@@ -592,13 +594,14 @@ def main(opt, callbacks=Callbacks()):
                 d = yaml.safe_load(f)
         else:
             d = torch.load(last, map_location='cpu')['opt']
+        # 将字典 d 转换成 Namespace 对象 opt，并将其作为返回值返回。这样，调用函数的代码片段可以通过属性访问的方式获取到所有的配置参数
         opt = argparse.Namespace(**d)  # replace
         opt.cfg, opt.weights, opt.resume = '', str(last), True  # reinstate
         if is_url(opt_data):
             opt.data = check_file(opt_data)  # avoid HUB resume auth timeout
     # 没用断点续训
     else:
-        # data:steal.yaml;cfg:yolov5s_GhostNet.yaml;
+        # data:'data/steal.yaml';cfg:'weights/yolov5s_GhostNet.yaml'; 都是字符串
         opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
             check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
         assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
@@ -608,19 +611,24 @@ def main(opt, callbacks=Callbacks()):
             opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
         if opt.name == 'cfg':
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
-        opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
+        opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # 生成保存地址
 
-    # DDP mode 多卡
+    # DDP模式多卡检查，设置使用的GPU设备，以及初始化分布式训练环境
     device = select_device(opt.device, batch_size=opt.batch_size)
     if LOCAL_RANK != -1:
         msg = 'is not compatible with YOLOv5 Multi-GPU DDP training'
+        # 不兼容根据类别权重使用图片进行训练
         assert not opt.image_weights, f'--image-weights {msg}'
+        # 不兼容超参进化
         assert not opt.evolve, f'--evolve {msg}'
+        # 不兼容自动计算batchsize
         assert opt.batch_size != -1, f'AutoBatch with --batch-size -1 {msg}, please pass a valid --batch-size'
+        # batchsize必须是worker的倍数
         assert opt.batch_size % WORLD_SIZE == 0, f'--batch-size {opt.batch_size} must be multiple of WORLD_SIZE'
         assert torch.cuda.device_count() > LOCAL_RANK, 'insufficient CUDA devices for DDP command'
         torch.cuda.set_device(LOCAL_RANK)
         device = torch.device('cuda', LOCAL_RANK)
+        # 初始化进程组
         dist.init_process_group(backend='nccl' if dist.is_nccl_available() else 'gloo')
 
     # Train 默认走这:
@@ -630,6 +638,7 @@ def main(opt, callbacks=Callbacks()):
     # Evolve hyperparameters (optional)
     else:
         # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
+        # 超参进化列表(突变规模，最小值，最大值)
         meta = {
             'lr0': (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
             'lrf': (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
@@ -662,13 +671,14 @@ def main(opt, callbacks=Callbacks()):
             'copy_paste': (1, 0.0, 1.0)}  # segment copy-paste (probability)
 
         with open(opt.hyp, errors='ignore') as f:
-            hyp = yaml.safe_load(f)  # load hyps dict
+            hyp = yaml.safe_load(f)  # load hyps dict hyp为字典
             if 'anchors' not in hyp:  # anchors commented in hyp.yaml
                 hyp['anchors'] = 3
         if opt.noautoanchor:
             del hyp['anchors'], meta['anchors']
         opt.noval, opt.nosave, save_dir = True, True, Path(opt.save_dir)  # only val/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
+        # 保存超参进化的结果文件
         evolve_yaml, evolve_csv = save_dir / 'hyp_evolve.yaml', save_dir / 'evolve.csv'
         if opt.bucket:
             # download evolve.csv if exists
@@ -677,10 +687,11 @@ def main(opt, callbacks=Callbacks()):
                 'cp',
                 f'gs://{opt.bucket}/evolve.csv',
                 str(evolve_csv), ])
-
+        # 默认进化300次
         for _ in range(opt.evolve):  # generations to evolve
             if evolve_csv.exists():  # if evolve.csv exists: select best hyps and mutate
                 # Select parent(s)
+                # 进化方式选择
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
                 x = np.loadtxt(evolve_csv, ndmin=2, delimiter=',', skiprows=1)
                 n = min(5, len(x))  # number of previous results to consider

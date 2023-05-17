@@ -111,6 +111,7 @@ def device_count():
 
 
 def select_device(device='', batch_size=0, newline=True):
+    '''用于选择模型训练的设备 并输出日志信息'''
     # device = None or 'cpu' or 0 or '0' or '0,1,2,3'
     s = f'YOLOv5 🚀 {git_describe() or file_date()} Python-{platform.python_version()} torch-{torch.__version__} '
     device = str(device).strip().lower().replace('cuda:', '').replace('none', '')  # to string, 'cuda:0' to '0'
@@ -321,9 +322,10 @@ def copy_attr(a, b, include=(), exclude=()):
 
 
 def smart_optimizer(model, name='Adam', lr=0.001, momentum=0.9, decay=1e-5):
-    # 总的来说，这个实现的优化器可以根据模型结构自动适应不同类型的参数，并使用不同的学习率和权重衰减进行训练，从而提高了训练的效率和精度。
-    # YOLOv5 3-param group optimizer: 0) weights with decay, 1) weights no decay, 2) biases no decay
-    # 针对这三类参数，使用了不同的学习率和权重衰减设置
+    '''总的来说，这个实现的优化器可以根据模型结构自动适应不同类型的参数，并使用不同的学习率和权重衰减进行训练，从而提高了训练的效率和精度。
+    YOLOv5 3-param group optimizer: 0) weights with decay, 1) weights no decay, 2) biases no decay
+    针对这三类参数，使用了不同的学习率和权重衰减设置
+    '''
     g = [], [], []  # optimizer parameter groups
     bn = tuple(v for k, v in nn.__dict__.items() if 'Norm' in k)  # normalization layers, i.e. BatchNorm2d()
     for v in model.modules():
