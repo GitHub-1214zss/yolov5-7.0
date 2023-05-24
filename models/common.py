@@ -1011,7 +1011,34 @@ class C3TR(C3):
 
 # ============================================== 修改内容: =======================================================
 # 1.注意力机制
+'''
+SE（Squeeze-and-Excitation）
+优点：
+可以通过学习自适应的通道权重，使得模型更加关注有用的通道信息。
+缺点：
+SE注意力机制只考虑了通道维度上的注意力，无法捕捉空间维度上的注意力，适用于通道数较多的场景，但对于通道数较少的情况可能不如其他注意力机制。
+
+CBAM（Convolutional Block Attention Module）
+优点：
+结合了卷积和注意力机制，可以从空间和通道两个方面上对图像进行关注。
+缺点：
+需要更多的计算资源，计算复杂度更高。
+
+ECA（Efficient Channel Attention）
+优点：
+可以同时考虑通道维度和空间维度上的注意力，对于特征图尺寸较大的场景下，计算效率较高。
+缺点：
+需要额外的计算，因此对于较小的特征图，可能会有较大的计算开销。
+
+CA（Coordinate Attention）
+优点：
+可以同时考虑通道维度和空间维度上的注意力，并且可以通过学习自适应的通道权重，使得模型更加关注有用的通道信息。
+缺点：
+需要额外的计算，计算开销较大。另外，由于需要对整个特征图进行注意力权重的计算，因此无法捕捉长距离的依赖关系
+'''
 # SE
+
+
 class SELayer(nn.Module):
     # 这个模型是将SE模块加入每个ResBlock中了，还可以只加在模型开头和结尾，到底是怎么加入模型还是要看实验结果的
     # https://arxiv.org/abs/1709.01507
@@ -1174,3 +1201,28 @@ class GhostBottleneck(nn.Module):
 
     def forward(self, x):
         return self.conv(x) + self.shortcut(x)
+
+# ECA
+
+
+class ECA(nn.Module):
+    """Constructs a ECA module.
+    Args:
+        channel: Number of channels of the input feature map
+        k_size: Adaptive selection of kernel size
+    """
+
+    def __init__(self, c1, c2, k_size=3):
+        super(ECA, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(1, 1, kernel_size=k_size, padding=(k_size - 1) // 2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        # feature descriptor on the global spatial information
+        y = self.avg_pool(x)
+        y = self.conv(y.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
+        # Multi-scale information fusion
+        y = self.sigmoid(y)
+
+        return x * y.expand_as(x)
