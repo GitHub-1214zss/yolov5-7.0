@@ -92,7 +92,7 @@ def run(
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
-    # Load model
+    # Load model 加载模型(例如best.pt)
     device = select_device(device)
     model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
     stride, names, pt = model.stride, model.names, model.pt
@@ -113,27 +113,42 @@ def run(
     # Run inference
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
+    '''
+    path: 图片/视频的路径
+    im: 进行resize + pad之后的图片
+    im0s: 原尺寸的图片
+    vid_cap: 当读取图片时为None, 读取视频时为视频源'''
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
-            im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
+            im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32图片也设置为float16
             im /= 255  # 0 - 255 to 0.0 - 1.0
+            # 如果图片是3维(RGB) 就在前面添加一个维度1当中batch_size=1
+            #  因为输入网络的图片需要是4为的 [batch_size, channel, w, h]
             if len(im.shape) == 3:
                 im = im[None]  # expand for batch dim
 
-        # Inference
+        # Inference 推理耗时
         with dt[1]:
             visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
             pred = model(im, augment=augment, visualize=visualize)
 
-        # NMS
+        # NMS nms耗时
+        # nms除去多余的框
+        # conf_thres: 置信度阈值
+        # iou_thres: iou阈值
+        # classes: 是否只保留特定的类别 默认为None
+        # agnostic_nms: 进行nms是否也去除不同类别之间的框 默认False
+        # max_det: 每张图片的最大目标个数 默认1000
+        # pred: [num_obj, 6] = [~, 6]6:box4个值+conf+cls;这里的预测信息pred还是相对于 img_size(640) 的;
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
         # Second-stage classifier (optional)
-        # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
+        # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)#二级分类
 
         # Process predictions
+        # 对每一张图片进行处理
         for i, det in enumerate(pred):  # per image
             seen += 1
             if webcam:  # batch_size >= 1
@@ -146,14 +161,15 @@ def run(
             save_path = str(save_dir / p.name)  # im.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
             s += '%gx%g ' % im.shape[2:]  # print string
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh 如tensor([1280,720,1280,720])
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
             if len(det):
-                # Rescale boxes from img_size to im0 size
+                # Rescale boxes from img_size to im0 size 还原原始尺寸
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
+                # 打印检测到的类别数目
                 for c in det[:, 5].unique():
                     n = (det[:, 5] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
@@ -165,16 +181,18 @@ def run(
                         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                         with open(f'{txt_path}.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
-
+                    # 在原图上画框
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
-                        label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
+                        label = None if hide_labels else (
+                            names[c] if hide_conf else f'{names[c]} {conf:.2f}')  # 如'steal:0.78'
                         annotator.box_label(xyxy, label, color=colors(c, True))
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
             # Stream results
             im0 = annotator.result()
+            # 显示预测后的图片
             if view_img:
                 if platform.system() == 'Linux' and p not in windows:
                     windows.append(p)
@@ -247,7 +265,7 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
     opt = parser.parse_args()
-    opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
+    opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand 640->640*640
     print_args(vars(opt))
     return opt
 

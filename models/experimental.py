@@ -58,7 +58,7 @@ class MixConv2d(nn.Module):
 
 
 class Ensemble(nn.ModuleList):
-    # Ensemble of models
+    # Ensemble of models 有多个模型时进行集成
     def __init__(self):
         super().__init__()
 
@@ -71,12 +71,20 @@ class Ensemble(nn.ModuleList):
 
 
 def attempt_load(weights, device=None, inplace=True, fuse=True):
+    """
+    加载模型权重文件并构建模型（可以构造普通模型或者集成模型）
+    Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
+    :params weights: 模型的权重文件地址 默认weights/yolov5s.pt
+                     可以是[a]也可以是list格式[a, b]  如果是list格式将调用上面的模型集成函数 多模型运算 提高最终模型的泛化误差
+    :params device: attempt_download函数参数  表示模型运行设备device
+    :params inplace: pytorch 1.7.0 compatibility设置
+    """
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
     from models.yolo import Detect, Model
 
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
-        ckpt = torch.load(attempt_download(w), map_location='cpu')  # load
+        ckpt = torch.load(attempt_download(w), map_location='cpu')  # 加载权重文件
         ckpt = (ckpt.get('ema') or ckpt['model']).to(device).float()  # FP32 model
 
         # Model compatibility updates
@@ -84,10 +92,10 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
             ckpt.stride = torch.tensor([32.])
         if hasattr(ckpt, 'names') and isinstance(ckpt.names, (list, tuple)):
             ckpt.names = dict(enumerate(ckpt.names))  # convert to dict
+        # eval评估模式，以便在推理时能够忽略一些随机性质和非必要的节点（如 Dropout 层）
+        model.append(ckpt.fuse().eval() if fuse and hasattr(ckpt, 'fuse') else ckpt.eval())  # eval 模式
 
-        model.append(ckpt.fuse().eval() if fuse and hasattr(ckpt, 'fuse') else ckpt.eval())  # model in eval mode
-
-    # Module compatibility updates
+    # Module compatibility updates 兼容性更新，针对不同版本的 PyTorch 工具做了兼容性处理，以保证模型能够正常运行
     for m in model.modules():
         t = type(m)
         if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Model):
