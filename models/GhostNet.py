@@ -127,45 +127,48 @@ class GhostModuleV2(nn.Module):
             return out[:, :self.oup, :, :] * F.interpolate(self.gate_fn(res), size=(out.shape[-2], out.shape[-1]), mode='nearest')
 
 
-class GhostBottleneckV2(nn.Module):
-
-    def __init__(self, in_chs, mid_chs, out_chs, dw_kernel_size=3,
-                 stride=1, act_layer=nn.ReLU, se_ratio=0., layer_id=None, args=None):
-        super(GhostBottleneckV2, self).__init__()
+class GhostBottleneckV2(nn.Module): 
+ 
+    def __init__(self, c1, c2, dw_kernel_size=3,
+                 stride=1, act_layer=nn.ReLU, se_ratio=0.,layer_id=None,args=None):
+        super().__init__()
+        
         has_se = se_ratio is not None and se_ratio > 0.
         self.stride = stride
-
+        mid_chs=c2 //2
         # Point-wise expansion
-
-        self.ghost1 = GhostModuleV2(in_chs, mid_chs, relu=True, mode='original', args=args)
-
+        if layer_id<=1:
+            self.ghost1 = GhostModuleV2(c1, mid_chs, relu=True,mode='original',args=args)
+        else:
+            self.ghost1 = GhostModuleV2(c1, mid_chs, relu=True,mode='attn',args=args) 
+ 
         # Depth-wise convolution
         if self.stride > 1:
             self.conv_dw = nn.Conv2d(mid_chs, mid_chs, dw_kernel_size, stride=stride,
-                                     padding=(dw_kernel_size - 1) // 2, groups=mid_chs, bias=False)
+                             padding=(dw_kernel_size-1)//2,groups=mid_chs, bias=False)
             self.bn_dw = nn.BatchNorm2d(mid_chs)
-
+ 
         # Squeeze-and-excitation
         if has_se:
             self.se = SqueezeExcite(mid_chs, se_ratio=se_ratio)
         else:
             self.se = None
-
-        self.ghost2 = GhostModuleV2(mid_chs, out_chs, relu=False, mode='original', args=args)
-
+            
+        self.ghost2 = GhostModuleV2(mid_chs, c2, relu=False,mode='original',args=args)
+        
         # shortcut
-        if (in_chs == out_chs and self.stride == 1):
+        if (c1 == c2 and self.stride == 1):
             self.shortcut = nn.Sequential()
         else:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_chs, in_chs, dw_kernel_size, stride=stride,
-                          padding=(dw_kernel_size - 1) // 2, groups=in_chs, bias=False),
-                nn.BatchNorm2d(in_chs),
-                nn.Conv2d(in_chs, out_chs, 1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(out_chs),
+                nn.Conv2d(c1, c1, dw_kernel_size, stride=stride,
+                       padding=(dw_kernel_size-1)//2, groups=c1, bias=False),
+                nn.BatchNorm2d(c1),
+                nn.Conv2d(c1, c2, 1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(c2),
             )
-
     def forward(self, x):
+        
         residual = x
         x = self.ghost1(x)
         if self.stride > 1:
@@ -175,6 +178,7 @@ class GhostBottleneckV2(nn.Module):
             x = self.se(x)
         x = self.ghost2(x)
         x += self.shortcut(residual)
+        #print("check ghostv2BOTTLENCK OUTPUIT size:",x.size())
         return x
 
 
