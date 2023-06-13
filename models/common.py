@@ -31,7 +31,8 @@ from utils.general import (LOGGER, ROOT, Profile, check_requirements, check_suff
                            xyxy2xywh, yaml_load)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import copy_attr, smart_inference_mode
-
+from models.GhostV2 import Ghostblockv2
+from models.GhostNet import *
 # ============================================= 核心模块 =====================================
 
 
@@ -129,6 +130,18 @@ class Bottleneck(nn.Module):
     def forward(self, x):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
+
+class BottleneckV8(nn.Module):
+    # Standard bottleneck
+    def __init__(self, c1, c2, shortcut=True, g=1,k=(3,3),e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
+        super(BottleneckV8, self).__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -1175,7 +1188,7 @@ class CoorAttention(nn.Module):
 # 2.Ghost
 class GhostConv(nn.Module):
     # Ghost Convolution https://github.com/huawei-noah/ghostnet
-    def __init__(self, c1, c2, k=1, s=1, g=1, act=True):  # ch_in, ch_out, kernel, stride, groups
+    def __init__(self, c1, c2, k=1, s=1, g=1, act=True):  # ch_in, ch_out, kernel, stride, groups=1 DWConv
         super().__init__()
         c_ = c2 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, k, s, None, g, act=act)
@@ -1187,7 +1200,7 @@ class GhostConv(nn.Module):
 
 
 class GhostBottleneck(nn.Module):
-    # Ghost Bottleneck https://github.com/huawei-noah/ghostnet
+    # Ghost BottleneckV1 https://github.com/huawei-noah/ghostnet
     def __init__(self, c1, c2, k=3, s=1):  # ch_in, ch_out, kernel, stride
         super(GhostBottleneck, self).__init__()
         c_ = c2 // 2
@@ -1202,9 +1215,16 @@ class GhostBottleneck(nn.Module):
     def forward(self, x):
         return self.conv(x) + self.shortcut(x)
 
+class C3GhostV2(C3):
+    # C3GV2 module with GhostV2
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.c1_ = 16
+        self.c2_ = 16 * e
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(*(Ghostblockv2(c_, self.c1_, c_) for _ in range(n)))
+
 # ECA
-
-
 class ECA(nn.Module):
     """Constructs a ECA module.
     Args:
@@ -1226,3 +1246,25 @@ class ECA(nn.Module):
         y = self.sigmoid(y)
 
         return x * y.expand_as(x)
+
+#C2FGhostV2
+class C2f(nn.Module):
+    # CSP Bottleneck with 2 convolutions
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList(BottleneckV8(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+
+    def forward(self, x):
+        y = list(self.cv1(x).split((self.c, self.c), 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+class C2fGhostV2(C2f):
+     # C3 module with GhostBottleneckV2()
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        self.m = nn.Sequential(*(GhostBottleneckV2(c_, c_,layer_id=id) for id in range(n)))

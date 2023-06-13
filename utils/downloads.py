@@ -53,7 +53,7 @@ def curl_download(url, filename, *, silent: bool = False) -> bool:
         '--retry',
         '9',
         '-C',
-        '-',])
+        '-', ])
     return proc.returncode == 0
 
 
@@ -82,6 +82,7 @@ def safe_download(file, url, url2=None, min_bytes=1E0, error_msg=''):
 
 
 def attempt_download(file, repo='ultralytics/yolov5', release='v7.0'):
+    # 本地没有则下载
     # Attempt file download from GitHub release assets if not found locally. release = 'latest', 'v7.0', etc.
     from utils.general import LOGGER
 

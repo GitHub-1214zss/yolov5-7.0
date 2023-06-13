@@ -13,6 +13,8 @@ from utils.general import LOGGER, check_version, check_yaml, make_divisible, pri
 from utils.autoanchor import check_anchor_order
 from models.experimental import *
 from models.common import *
+from models.GhostNet import GhostBottleneckV2
+from models.GhostV2 import *
 import argparse
 import contextlib
 import os
@@ -36,7 +38,7 @@ except ImportError:
 
 
 class Detect(nn.Module):
-    """Detect模块是用来构建Detect层的，将输入feature map 通过一个卷积操作和公式计算到我们想要的shape, 为后面的计算损失或者NMS作准备"""
+    """Detect模块是用来构建Detect层的，将输入feature map 通过一个卷积操作和公式计算到我们想要的shape, 同时为后面的计算损失或者NMS作准备"""
     # YOLOv5 Detect head for detection models
     stride = None  # strides computed during build
     dynamic = False  # force grid reconstruction
@@ -45,20 +47,21 @@ class Detect(nn.Module):
     def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
         super().__init__()
         self.nc = nc  # number of classes
-        self.no = nc + 5  # number of outputs per anchor VOC: 5+20=25  xywhc+20classes
-        self.nl = len(anchors)  # number of detection layers Detect层的个数 3层
+        self.no = nc + 5  # 每个anchor输出值的数目 VOC: 5+20=25  xywhc+20classes
+        self.nl = len(anchors)  # number of detection layers Detect层的个数3层
         self.na = len(anchors[0]) // 2  # number of anchors 每个feature map的anchor个数 3中尺度的anchor
-        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid {list: 3}  tensor([0.]) X 3 初始化为0
+        self.grid = [torch.empty(0) for _ in range(self.nl)]  # init grid {list: 3}  tensor([0.]) X 3 列表初始化为0
         self.anchor_grid = [torch.empty(0) for _ in range(self.nl)]  # init anchor grid
-        # a =  torch.tensor(anchors).float().view(self.nl, -1, 2)#分离anchors给a;anchors以[w, h]对的形式存储  3个feature map 每个feature map上有三个anchor（w,h）
+        # a =  torch.tensor(anchors).float().view(self.nl, -1, 2) 将anchors划分开来
+        # 分离anchors给a;anchors以[w, h]对的形式存储  3个feature map 每个feature map上有三个anchor（w,h）
         '''
         register_buffer:
         模型中需要保存的参数一般有两种:一种是反向传播需要被optimizer更新的，称为parameter; 另一种不要被更新称为buffer
         第二种参数我们需要创建tensor，然后将tensor通过register_buffer()进行注册,可以通过model.buffers()返回，
-        注册完后参数也会自动保存到OrderDict中去。
+        注册完后参数也会自动保存到OrderDict中去。这样buffer只会在正向传播才会更新，即只会正向传播更新anchor，反向传播不更新
         |注意: buffer的更新在forward中，optim.step只能更新nn.parameter类型的参数
         '''
-        # 对anchor的保存
+        # 对anchor的处理，只会在正向传播时更新anchors
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
         # 对输出的卷积 对每个输出的feature map都要调用一次conv1x1，输入x，输出 (类别数+5)*3
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
@@ -76,12 +79,13 @@ class Detect(nn.Module):
         z = []  # inference output
         for i in range(self.nl):  # 对三个feature map分别进行处理
             x[i] = self.m[i](x[i])  # conv
-            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85) bs:batch size
+            bs, _, ny, nx = x[i].shape
+            # x(bs,255,20,20) to x(bs,3,20,20,85) bs:batch size 调整顺序
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # 推理
                 # 构造网格
-                # 因为推理返回的不是归一化后的网格偏移量 需要再加上网格的位置 得到最终的推理坐标 再送入nms
+                # 因为推理返回的不是归一化后的网格偏移量 需要再加上网格的位置才能得到最终的推理坐标 再送入nms
                 # 所以这里构建网格就是为了记录每个grid的网格坐标 方面后面使用
                 if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
                     self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
@@ -92,11 +96,12 @@ class Detect(nn.Module):
                     wh = (wh.sigmoid() * 2) ** 2 * self.anchor_grid[i]  # wh
                     y = torch.cat((xy, wh, conf.sigmoid(), mask), 4)
                 else:  # Detect (boxes only)
+                    # 求出预测框的坐标信息 xy，wh
                     xy, wh, conf = x[i].sigmoid().split((2, 2, self.nc + 1), 4)
                     xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
                     wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
                     y = torch.cat((xy, wh, conf), 4)
-                z.append(y.view(bs, self.na * nx * ny, self.no))
+                z.append(y.view(bs, self.na * nx * ny, self.no))  # 预测框坐标信息
 
         return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
 
@@ -148,23 +153,26 @@ class BaseModel(nn.Module):
         # y: 存放着self.save=True的每一层的输出，因为后面的层结构concat等操作要用到
         # dt: 在profile中做性能评估时使用
         y, dt = [], []  # outputs
+        # 对每一层进行处理，前向推理每一层
         for m in self.model:
             # 前向推理每一层结构   m.i=index   m.f=from   m.type=类名   m.np=number of params
-            # if not from previous layer   m.f=当前层的输入来自哪一层的输出  s的m.f都是-1
-            if m.f != -1:  # if not from previous layer
+            # if not from previous layer   m.f=当前层的输入来自哪一层的输出
+            if m.f != -1:  # if not from previous layer不来自于上一层
                 # 这里需要做4个concat操作和1个Detect操作
                 # concat操作如m.f=[-1, 6] x就有两个元素,一个是上一层的输出,另一个是index=6的层的输出 再送到x=m(x)做concat操作
                 # Detect操作m.f=[17, 20, 23] x有三个元素,分别存放第17层第20层第23层的输出 再送到x=m(x)做Detect的forward
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
+                # 预估时间
                 self._profile_one_layer(m, x, dt)
-            x = m(x)  # run
+            x = m(x)  # run执行网络组件操作
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
-        return x
+        return x  # 返回前向传播后的数据
 
     def _profile_one_layer(self, m, x, dt):
+        '''预估时间'''
         c = m == self.model[-1]  # is final layer, copy input as inplace fix
         o = thop.profile(m, inputs=(x.copy() if c else x,), verbose=False)[0] / 1E9 * 2 if thop else 0  # FLOPs
         t = time_sync()
@@ -209,7 +217,7 @@ class BaseModel(nn.Module):
 
 
 class DetectionModel(BaseModel):
-    # YOLOv5 detection model
+    # YOLOv5  model
     def __init__(self, cfg='yolov5s.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         """
         :params cfg:模型配置文件
@@ -219,7 +227,7 @@ class DetectionModel(BaseModel):
         """
         super().__init__()
         if isinstance(cfg, dict):
-            self.yaml = cfg  # model dict
+            self.yaml = cfg  # model 字典
         else:  # is *.yaml
             import yaml  # for torch hub
             self.yaml_file = Path(cfg).name
@@ -248,7 +256,7 @@ class DetectionModel(BaseModel):
 
         # Build strides, anchors
         # 获取Detect模块的stride(相对输入图像的下采样率)和anchors在当前Detect输出的feature map的尺度
-        m = self.model[-1]  # m= Detect() 即3个卷积层
+        m = self.model[-1]  # m= Detect()(即3个卷积层)
         if isinstance(m, (Detect, Segment)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
@@ -370,11 +378,11 @@ class ClassificationModel(BaseModel):
 
 def parse_model(d, ch):  # model_dict, input_channels(3)
     """解析网络模型配置文件并构建模型;
-    用在上面Model模块中
+    在上面DetectionModel模块中__init__被调用
     解析模型文件(字典形式)，并搭建网络结构
-    这个函数其实主要做的就是: 更新当前层的args（参数）,计算c2（当前层的输出channel） =>
+    这个函数其实主要做的就是: 更新当前层的args(参数),计算c2(当前层的输出channel) =>
                           使用当前层的参数搭建当前层 =>
-                          生成 layers + save
+                          生成 layers + save(记录非-1层)
     函数参数 d代表: model_dict 模型文件 字典形式 {dict:7}  yolov5s.yaml中的6个元素 + ch相当于读取yolo.yaml中内容构成的字典
     函数参数 ch代表: 记录模型每一层的输出channel 初始ch=[3] 后面会删除
     :return nn.Sequential(*layers): 网络的每一层的层结构
@@ -395,6 +403,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
     # c2: 保存当前层的输出channel
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     # from(当前层输入来自哪些层), number(当前层重复次数 初定), module(当前层类别), args(当前层类参数 初定)
+    # 循环构造网络
     for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
         # eval(string) 得到当前层的真实类名 例如: m= Focus -> <class 'models.common.Focus'>
         m = eval(m) if isinstance(m, str) else m  # eval strings
@@ -407,7 +416,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in {
                 Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
-                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
+                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x, GhostBottleneckV2,C2fGhostV2}:  # 加载common.py中的模块
             # c1: 当前层的输入的channel数  c2: 当前层的输出的channel数(初定)  ch: 记录着所有层的输出channel
             c1, c2 = ch[f], args[0]
             # if not output  no=75  只有最后一层c2=no  最后一层不用控制宽度，输出channel必须是no
@@ -419,7 +428,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
             # 如果当前层是BottleneckCSP/C3/C3TR, 则需要在args中加入bottleneck的个数
             # [in_channel, out_channel, Bottleneck的个数n, bool(True表示有shortcut 默认，反之无)
-            if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
+            if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x,C2fGhostV2}:
                 args.insert(2, n)  # number of repeats
                 n = 1
         elif m is nn.BatchNorm2d:
@@ -440,6 +449,14 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             c2 = ch[f] * args[0] ** 2
         elif m is Expand:  # 不怎么用
             c2 = ch[f] // args[0] ** 2
+        elif m in [C3GhostV2]: #C3Ghostv2
+            c1, c2 = ch[f], args[0]
+            if c2 != no:  # if not outputss
+                c2 = make_divisible(c2 * gw, 8)
+            args = [c1, c2, *args[1:]]
+            if m in [C3GhostV2]:
+                args.insert(2, n)  # number of repeats
+                n = 1
         else:
             # Upsample
             c2 = ch[f]  # args不变
@@ -464,11 +481,11 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='yolov5s.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default='yolov5s_C3GhostV2.yaml', help='model.yaml')
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--profile', action='store_true', help='profile model speed')
-    parser.add_argument('--line-profile', action='store_true', help='profile model speed layer by layer')
+    parser.add_argument('--profile', action='store_true', help='profile model speed',default=True)
+    parser.add_argument('--line-profile', action='store_true', help='profile model speed layer by layer',default=True)
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
     opt = parser.parse_args()
     opt.cfg = check_yaml(opt.cfg)  # check YAML
