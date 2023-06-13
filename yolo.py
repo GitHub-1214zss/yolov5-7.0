@@ -13,7 +13,8 @@ from utils.general import LOGGER, check_version, check_yaml, make_divisible, pri
 from utils.autoanchor import check_anchor_order
 from models.experimental import *
 from models.common import *
-from models.GhostNet import *
+from models.GhostNet import GhostBottleneckV2
+from models.GhostV2 import *
 import argparse
 import contextlib
 import os
@@ -448,6 +449,14 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             c2 = ch[f] * args[0] ** 2
         elif m is Expand:  # 不怎么用
             c2 = ch[f] // args[0] ** 2
+        elif m in [C3GhostV2]: #C3Ghostv2
+            c1, c2 = ch[f], args[0]
+            if c2 != no:  # if not outputss
+                c2 = make_divisible(c2 * gw, 8)
+            args = [c1, c2, *args[1:]]
+            if m in [C3GhostV2]:
+                args.insert(2, n)  # number of repeats
+                n = 1
         else:
             # Upsample
             c2 = ch[f]  # args不变
@@ -472,7 +481,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='yolov5s_GhostBottleneck.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default='yolov5s_C3GhostV2.yaml', help='model.yaml')
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', action='store_true', help='profile model speed')

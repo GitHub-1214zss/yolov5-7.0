@@ -31,7 +31,7 @@ from utils.general import (LOGGER, ROOT, Profile, check_requirements, check_suff
                            xyxy2xywh, yaml_load)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import copy_attr, smart_inference_mode
-
+from models.GhostV2 import Ghostblockv2
 # ============================================= 核心模块 =====================================
 
 
@@ -1202,9 +1202,16 @@ class GhostBottleneck(nn.Module):
     def forward(self, x):
         return self.conv(x) + self.shortcut(x)
 
+class C3GhostV2(C3):
+    # C3GV2 module with GhostV2
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.c1_ = 16
+        self.c2_ = 16 * e
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(*(Ghostblockv2(c_, self.c1_, c_) for _ in range(n)))
+
 # ECA
-
-
 class ECA(nn.Module):
     """Constructs a ECA module.
     Args:
