@@ -13,6 +13,7 @@ from utils.general import LOGGER, check_version, check_yaml, make_divisible, pri
 from utils.autoanchor import check_anchor_order
 from models.experimental import *
 from models.common import *
+from models.GhostNet import *
 import argparse
 import contextlib
 import os
@@ -215,7 +216,7 @@ class BaseModel(nn.Module):
 
 
 class DetectionModel(BaseModel):
-    # YOLOv5 detection model
+    # YOLOv5  model
     def __init__(self, cfg='yolov5s.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         """
         :params cfg:模型配置文件
@@ -414,7 +415,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in {
                 Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
-                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:  # 加载common.py中的模块
+                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x, GhostBottleneckV2}:  # 加载common.py中的模块
             # c1: 当前层的输入的channel数  c2: 当前层的输出的channel数(初定)  ch: 记录着所有层的输出channel
             c1, c2 = ch[f], args[0]
             # if not output  no=75  只有最后一层c2=no  最后一层不用控制宽度，输出channel必须是no
@@ -471,7 +472,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='yolov5s.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default='yolov5s_GhostBottleneck.yaml', help='model.yaml')
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', action='store_true', help='profile model speed')
