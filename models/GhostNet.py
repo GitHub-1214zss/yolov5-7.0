@@ -1,3 +1,4 @@
+# 用在了C2FGhostV2
 # 2020.11.06-Changed for building GhostNetV2
 #            Huawei Technologies Co., Ltd. <foss@huawei.com>
 """
