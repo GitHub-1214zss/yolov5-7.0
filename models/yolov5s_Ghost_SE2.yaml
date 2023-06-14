@@ -1,5 +1,5 @@
 # YOLOv5 🚀 by Ultralytics, GPL-3.0 license
-
+# ghostbottleneck num均为1
 # Parameters
 nc: 1 # number of classes
 depth_multiple: 1 # model depth multiple
