@@ -236,7 +236,7 @@ def run(
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT /
-                        'runs/train/2023年5月26日14点41分/exp6/weights/best.pt', help='model path or triton URL')
+                        'weights/v5s_steal_1020_ap100.pt', help='model path or triton URL')
     parser.add_argument('--source', type=str, default=ROOT / 'VOCdevkit/images/val',
                         help='file/dir/URL/glob/screen/0(webcam)')
     parser.add_argument('--data', type=str, default=ROOT / 'data/steal.yaml', help='(optional) dataset.yaml path')

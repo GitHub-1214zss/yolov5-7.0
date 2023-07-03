@@ -1263,7 +1263,7 @@ class C2f(nn.Module):
         return self.cv2(torch.cat(y, 1))
 
 class C2fGhostV2(C2f):
-     # C3 module with GhostBottleneckV2()
+     # C2 module with GhostBottleneckV2()
     def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)  # hidden channels
