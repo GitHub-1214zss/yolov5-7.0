@@ -4,8 +4,8 @@ from PIL import Image  # python3安装pillow库
 import os.path
 import glob
 
-Source_address = r"D:\Projects\data\steal\img"
-target_address = r"D:\Projects\data\steal\img"
+Source_address = r"D:\Projects\PythonProject\yolov5-6.0-steal\VOCdevkit\VOC2008\JPEGImages"
+target_address = r"D:\Projects\PythonProject\yolov5-6.0-steal\VOCdevkit\VOC2008\JPEGImages"
 
 
 class BatchRename():
@@ -17,10 +17,10 @@ class BatchRename():
         self.path = target_address  # 表示需要命名处理的文件夹
         self.save_path = target_address  # 保存重命名后的图片地址
 
-    def rename(self):
+    def rename(self, i):
         filelist = os.listdir(self.path)  # 获取文件路径
         total_num = len(filelist)  # 获取文件长度（个数）
-        i = 1  # 表示文件的命名是从i开始的
+        i = i  # 表示文件的命名是从i开始的
         for item in filelist:
             print(item)
             # 初始的图片的格式为jpg格式的（或者源文件是png格式及其他格式，后面的转换格式就可以调整为自己需要的格式即可）
@@ -53,4 +53,4 @@ if __name__ == '__main__':
     # for jpgfile in glob.glob(Source_address+"/*.jpg"):  # 修改该文件夹下的jpg图片
     #     convertSize(jpgfile, target_address)  # 另存为的文件夹路径
     demo = BatchRename()
-    demo.rename()
+    demo.rename(1)  # 从i开始重新编号

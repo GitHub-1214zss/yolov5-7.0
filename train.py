@@ -524,10 +524,10 @@ def train(hyp, opt, device, callbacks):
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default=ROOT / 'weights/yolov5s.pt', help='initial weights path')
-    parser.add_argument('--cfg', type=str, default='models/yolov5s_GhostNet.yaml', help='model.yaml path')
+    parser.add_argument('--cfg', type=str, default='models/yolov5s_GC2FGhostV2.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'data/steal.yaml', help='dataset.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
+    parser.add_argument('--epochs', type=int, default=200, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=-1, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')

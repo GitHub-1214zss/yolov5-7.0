@@ -41,6 +41,7 @@ coco/
 coco128/
 VOC/
 VOCdevkit/
+
 # MATLAB GitIgnore -----------------------------------------------------------------------------------------------------
 *.m~
 *.mat
@@ -254,3 +255,5 @@ com_crashlytics_export_strings.xml
 crashlytics.properties
 crashlytics-build.properties
 fabric.properties
+.autodl/
+.autodl/autopanel.monitor.db
