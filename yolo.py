@@ -481,11 +481,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-<<<<<<< HEAD
-    parser.add_argument('--cfg', type=str, default='yolov5s_GC2FGhostV2.yaml', help='model.yaml')
-=======
     parser.add_argument('--cfg', type=str, default='yolov5s_C2FGhostV2.yaml', help='model.yaml')
->>>>>>> 018abefd56477d116cd28f1255c93b7be1ec9b2a
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', action='store_true', help='profile model speed',default=True)
